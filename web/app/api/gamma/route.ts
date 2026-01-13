@@ -5,9 +5,27 @@ export const dynamic = 'force-dynamic'
 async function getYahooFinancePrice(symbol: string) {
   try {
     const response = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1m&range=1d`,
-      { cache: 'no-store' }
+      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`,
+      { 
+        cache: 'no-store',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json'
+        }
+      }
     )
+    
+    if (!response.ok) {
+      console.error(`Yahoo Finance returned status ${response.status} for ${symbol}`)
+      return null
+    }
+    
+    const contentType = response.headers.get('content-type')
+    if (!contentType || !contentType.includes('application/json')) {
+      console.error(`Yahoo Finance returned non-JSON content for ${symbol}`)
+      return null
+    }
+    
     const data = await response.json()
     
     if (data.chart?.result?.[0]?.meta?.regularMarketPrice) {
@@ -157,9 +175,12 @@ export async function GET() {
       getYahooFinancePrice('ES=F')
     ])
     
-    const finalSpxPrice = spxPrice || 5850
-    const finalEsPrice = esPrice || finalSpxPrice + 2
+    // Use realistic defaults if Yahoo Finance fails
+    const finalSpxPrice = spxPrice || 5950
+    const finalEsPrice = esPrice || finalSpxPrice + 3.5
     const spread = finalEsPrice - finalSpxPrice
+    
+    console.log('Prices fetched:', { spxPrice, esPrice, finalSpxPrice, finalEsPrice, spread })
     
     // Generate options and calculate levels
     const options = generateMockOptions(finalSpxPrice)
