@@ -53,13 +53,25 @@ function generateMockOptions(spxPrice: number) {
   
   const options = []
   
+  // Round to nearest 50 for key levels
+  const roundedPrice = Math.round(spxPrice / 50) * 50
+  
   for (const strike of strikes) {
     const distance = Math.abs(strike - spxPrice)
     
+    // Boost gamma at round numbers (multiples of 25, 50, 100)
+    let gammaMultiplier = 1.0
+    if (strike % 100 === 0) gammaMultiplier = 3.0  // Major round numbers
+    else if (strike % 50 === 0) gammaMultiplier = 2.5
+    else if (strike % 25 === 0) gammaMultiplier = 2.0
+    
+    // Distance-based gamma (peaks at ATM, decays exponentially)
+    const baseGamma = 0.001 * Math.exp(-distance / 40)
+    
     // Calls
-    const callVolume = Math.max(100, Math.floor(1000 * Math.exp(-distance / 50)))
+    const callVolume = Math.max(100, Math.floor(1000 * Math.exp(-distance / 50) * gammaMultiplier))
     const callOI = Math.floor(callVolume * (2 + Math.random() * 3))
-    const callGamma = 0.001 * Math.exp(-distance / 30)
+    const callGamma = baseGamma * gammaMultiplier
     
     options.push({
       strike,
@@ -69,10 +81,11 @@ function generateMockOptions(spxPrice: number) {
       gamma: callGamma
     })
     
-    // Puts
-    const putVolume = Math.max(100, Math.floor(1200 * Math.exp(-distance / 50)))
+    // Puts - typically higher OI below current price
+    const putMultiplier = strike < spxPrice ? 1.3 : 1.0
+    const putVolume = Math.max(100, Math.floor(1200 * Math.exp(-distance / 50) * gammaMultiplier * putMultiplier))
     const putOI = Math.floor(putVolume * (2 + Math.random() * 3))
-    const putGamma = 0.001 * Math.exp(-distance / 30)
+    const putGamma = baseGamma * gammaMultiplier * putMultiplier
     
     options.push({
       strike,
