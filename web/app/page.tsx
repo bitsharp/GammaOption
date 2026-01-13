@@ -50,6 +50,10 @@ export default function Home() {
       }
 
       if (gammaRes.data.success) {
+        console.log('Gamma data received:', gammaRes.data.data)
+        console.log('PUT WALL ES:', gammaRes.data.data.levels_es?.put_wall)
+        console.log('CALL WALL ES:', gammaRes.data.data.levels_es?.call_wall)
+        console.log('ES PRICE:', gammaRes.data.data.es_price)
         setGamma(gammaRes.data.data)
       }
 
