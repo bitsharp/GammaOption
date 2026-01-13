@@ -10,6 +10,7 @@ from gamma_engine import GammaEngine
 from es_converter import SPXtoESConverter
 from alert_system import AlertSystem
 import json
+from reporting import write_daily_table
 
 
 class GammaScheduler:
@@ -86,6 +87,16 @@ class GammaScheduler:
         logger.info("🔄 JOB: Calculating gamma levels")
         
         try:
+            # Ensure spread is available (use cached, else compute now)
+            spread = self.converter.get_spread()
+            es_price = None
+            if spread is None:
+                spx_now = self.fetcher.get_spx_price()
+                es_now = self.fetcher.get_es_price()
+                if spx_now and es_now:
+                    spread = self.converter.calculate_spread(spx_now, es_now)
+                    es_price = es_now
+
             # Check if we have options data
             if 'options_df' not in self.current_data or 'spx_price' not in self.current_data:
                 logger.error("No options data available for level calculation")
@@ -98,19 +109,31 @@ class GammaScheduler:
             df_agg, levels, regime = self.engine.process_options_data(options_df, spx_price)
             
             # Convert levels to ES
-            converted_levels = self.converter.convert_levels_dict(levels)
+            price_levels = {k: v for k, v in levels.items() if k in {"put_wall", "call_wall", "gamma_flip"}}
+            converted_levels = self.converter.convert_levels_dict(price_levels)
             
             # Save results
             results = {
                 'timestamp': datetime.now().isoformat(),
+                'date': datetime.now().date().isoformat(),
                 'spx_price': spx_price,
+                'es_price': es_price,
+                'spread': spread,
                 'levels': levels,
                 'converted_levels': converted_levels,
-                'regime': regime
+                'regime': regime,
+                'gamma_profile': df_agg[['strike', 'net_gamma', 'call_gamma', 'put_gamma']].head(200).to_dict('records')
             }
             
             with open(config.data_dir / "latest_levels.json", 'w') as f:
                 json.dump(results, f, indent=2)
+
+            # Write daily table
+            try:
+                table_path = write_daily_table(config.data_dir, results)
+                logger.info(f"✅ Daily table saved: {table_path}")
+            except Exception as e:
+                logger.warning(f"Could not write daily table: {e}")
             
             # Store in state
             self.current_data['converted_levels'] = converted_levels

@@ -6,6 +6,8 @@ from loguru import logger
 from polygon import RESTClient
 import yfinance as yf
 import numpy as np
+import requests
+from urllib.parse import quote
 from config import config
 
 
@@ -26,6 +28,48 @@ class DataFetcher:
         else:
             logger.warning("No Polygon API key - using free data sources only")
             self.client = None
+
+    def _get_yahoo_chart_price(self, symbol: str) -> Optional[float]:
+        """Fetch latest price using Yahoo Finance chart endpoint (no yfinance).
+
+        This is used as a fallback because yfinance can intermittently fail due to
+        rate limiting or changes in Yahoo responses.
+        """
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}?interval=1d&range=1d"
+            response = requests.get(
+                url,
+                timeout=10,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    "Accept": "application/json",
+                },
+            )
+
+            if not response.ok:
+                logger.warning(f"Yahoo chart returned status {response.status_code} for {symbol}")
+                return None
+
+            data = response.json()
+            result = (data.get("chart") or {}).get("result")
+            if not result:
+                return None
+
+            meta = result[0].get("meta") or {}
+            if meta.get("regularMarketPrice") is not None:
+                return float(meta["regularMarketPrice"])
+
+            indicators = result[0].get("indicators") or {}
+            quote_data = (indicators.get("quote") or [{}])[0]
+            closes = quote_data.get("close") or []
+            closes = [c for c in closes if c is not None]
+            if closes:
+                return float(closes[-1])
+
+            return None
+        except Exception as e:
+            logger.warning(f"Yahoo chart fetch failed for {symbol}: {e}")
+            return None
         
     def get_spx_price(self) -> Optional[float]:
         """Get current SPX cash price.
@@ -58,11 +102,18 @@ class DataFetcher:
                 return price
             
             logger.warning("No SPX price data available from yfinance")
-            return None
-            
         except Exception as e:
             logger.error(f"Error fetching SPX price from yfinance: {e}")
-            return None
+
+        # Final fallback: direct Yahoo chart endpoint
+        logger.info("Using Yahoo chart endpoint as fallback for SPX price...")
+        price = self._get_yahoo_chart_price("^GSPC")
+        if price is not None:
+            logger.info(f"SPX current price (Yahoo chart): {price}")
+            return price
+
+        logger.error("All SPX price sources failed")
+        return None
     
     def get_es_price(self) -> Optional[float]:
         """Get current ES future price (front month).
@@ -95,11 +146,18 @@ class DataFetcher:
                 return price
             
             logger.warning("No ES price data available from yfinance")
-            return None
-            
         except Exception as e:
             logger.error(f"Error fetching ES price from yfinance: {e}")
-            return None
+
+        # Final fallback: direct Yahoo chart endpoint
+        logger.info("Using Yahoo chart endpoint as fallback for ES price...")
+        price = self._get_yahoo_chart_price("ES=F")
+        if price is not None:
+            logger.info(f"ES current price (Yahoo chart): {price}")
+            return price
+
+        logger.error("All ES price sources failed")
+        return None
     
     def get_0dte_options(self, expiration_date: Optional[date] = None) -> pd.DataFrame:
         """Get 0DTE options data for SPX.
@@ -113,10 +171,10 @@ class DataFetcher:
         if expiration_date is None:
             expiration_date = date.today()
         
-        # Check if Polygon is available
+        # If Polygon isn't available, try real Yahoo Finance options (free) and otherwise return no data.
         if not self.use_polygon or not self.client:
-            logger.warning("Polygon API not available - generating mock options data for testing")
-            return self._generate_mock_options_data()
+            logger.warning("Polygon API not available - trying Yahoo Finance options")
+            return self._fetch_yfinance_options(expiration_date)
         
         try:
             # Format expiration date for Polygon API
@@ -201,7 +259,7 @@ class DataFetcher:
             
             if not expirations:
                 logger.warning("No expirations available from Yahoo Finance")
-                return self._generate_mock_options_data()
+                return pd.DataFrame()
             
             # Find closest expiration to requested date
             target_date_str = expiration_date.strftime("%Y-%m-%d")
@@ -273,6 +331,18 @@ class DataFetcher:
                         'theta': -0.5,  # Approximation
                         'vega': 0.3,    # Approximation
                     })
+
+            if not options_data:
+                logger.warning("Yahoo Finance returned no options rows")
+                return pd.DataFrame()
+
+            df = pd.DataFrame(options_data)
+            logger.info(f"Fetched {len(df)} option rows from Yahoo Finance")
+            return df
+
+        except Exception as e:
+            logger.error(f"Error fetching options from Yahoo Finance: {e}")
+            return pd.DataFrame()
             
             if not options_data:
                 logger.warning("No options data from Yahoo Finance")

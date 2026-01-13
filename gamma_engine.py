@@ -109,16 +109,20 @@ class GammaEngine:
         
         levels = {}
         
-        # Put Wall: Strike with maximum absolute put gamma (most negative)
-        put_strikes = df[df['strike'] <= current_price].copy()
+        # Put Wall: Strike with maximum absolute put gamma below current price
+        put_strikes = df[df['strike'] < current_price].copy()
+        if put_strikes.empty:
+            put_strikes = df[df['strike'] <= current_price].copy()
         if not put_strikes.empty:
             put_wall_idx = put_strikes['put_gamma'].abs().idxmax()
             levels['put_wall'] = float(put_strikes.loc[put_wall_idx, 'strike'])
             levels['put_wall_gamma'] = float(put_strikes.loc[put_wall_idx, 'put_gamma'])
             logger.info(f"Put Wall identified at ${levels['put_wall']:.2f} (Gamma: {levels['put_wall_gamma']:.2e})")
         
-        # Call Wall: Strike with maximum absolute call gamma (most negative)
-        call_strikes = df[df['strike'] >= current_price].copy()
+        # Call Wall: Strike with maximum absolute call gamma above current price
+        call_strikes = df[df['strike'] > current_price].copy()
+        if call_strikes.empty:
+            call_strikes = df[df['strike'] >= current_price].copy()
         if not call_strikes.empty:
             call_wall_idx = call_strikes['call_gamma'].abs().idxmax()
             levels['call_wall'] = float(call_strikes.loc[call_wall_idx, 'strike'])

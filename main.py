@@ -9,6 +9,7 @@ from gamma_engine import GammaEngine
 from es_converter import SPXtoESConverter
 from alert_system import AlertSystem
 import json
+from reporting import write_daily_table
 
 
 def setup_logging():
@@ -85,7 +86,8 @@ def run_full_analysis():
         
         # Step 6: Convert to ES levels
         logger.info("\n[STEP 6] Converting levels to ES...")
-        converted_levels = converter.convert_levels_dict(levels)
+        price_levels = {k: v for k, v in levels.items() if k in {"put_wall", "call_wall", "gamma_flip"}}
+        converted_levels = converter.convert_levels_dict(price_levels)
         
         # Step 7: Setup alerts
         logger.info("\n[STEP 7] Setting up alerts...")
@@ -94,17 +96,26 @@ def run_full_analysis():
         # Prepare results
         results = {
             'timestamp': datetime.now().isoformat(),
+            'date': datetime.now().date().isoformat(),
             'spx_price': spx_price,
             'es_price': es_price,
             'spread': spread,
             'regime': regime,
             'levels': levels,
-            'converted_levels': converted_levels
+            'converted_levels': converted_levels,
+            'gamma_profile': df_agg[['strike', 'net_gamma', 'call_gamma', 'put_gamma']].head(200).to_dict('records')
         }
         
         # Save results
         with open(config.data_dir / "latest_levels.json", 'w') as f:
             json.dump(results, f, indent=2)
+
+        # Save daily table (CSV)
+        try:
+            table_path = write_daily_table(config.data_dir, results)
+            logger.info(f"Daily table saved: {table_path}")
+        except Exception as e:
+            logger.warning(f"Could not write daily table: {e}")
         
         # Display summary
         logger.info("\n" + "=" * 80)

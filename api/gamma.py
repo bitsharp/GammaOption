@@ -16,44 +16,19 @@ def get_spx_price():
             return float(data['Close'].iloc[-1])
     except:
         pass
-    return 5850.0
+    return None
 
 
-def generate_mock_options(spx_price):
-    """Generate mock options data."""
-    strikes = np.arange(spx_price - 100, spx_price + 100, 5)
-    options_data = []
-    
-    for strike in strikes:
-        distance = abs(strike - spx_price)
-        
-        # Calls
-        call_volume = int(max(100, 1000 * np.exp(-distance / 50)))
-        call_oi = int(call_volume * np.random.uniform(2, 5))
-        call_gamma = 0.001 * np.exp(-distance / 30)
-        
-        options_data.append({
-            'strike': strike,
-            'type': 'call',
-            'volume': call_volume,
-            'open_interest': call_oi,
-            'gamma': call_gamma,
-        })
-        
-        # Puts
-        put_volume = int(max(100, 1200 * np.exp(-distance / 50)))
-        put_oi = int(put_volume * np.random.uniform(2, 5))
-        put_gamma = 0.001 * np.exp(-distance / 30)
-        
-        options_data.append({
-            'strike': strike,
-            'type': 'put',
-            'volume': put_volume,
-            'open_interest': put_oi,
-            'gamma': put_gamma,
-        })
-    
-    return pd.DataFrame(options_data)
+def get_es_price():
+    """Get current ES price."""
+    try:
+        es = yf.Ticker("ES=F")
+        es_data = es.history(period="1d", interval="1m")
+        if not es_data.empty:
+            return float(es_data['Close'].iloc[-1])
+    except:
+        pass
+    return None
 
 
 def calculate_gamma_levels(df, spx_price):
@@ -109,16 +84,33 @@ class handler(BaseHTTPRequestHandler):
         try:
             # Get SPX price
             spx_price = get_spx_price()
+            es_price = get_es_price()
+
+            if spx_price is None or es_price is None:
+                response = {
+                    'success': False,
+                    'error': 'No data available'
+                }
+                self.send_response(503)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+                return
             
-            # Get ES price for spread
-            es = yf.Ticker("ES=F")
-            es_data = es.history(period="1d", interval="1m")
-            es_price = float(es_data['Close'].iloc[-1]) if not es_data.empty else spx_price + 2
             spread = es_price - spx_price
-            
-            # Generate options and calculate levels
-            options_df = generate_mock_options(spx_price)
-            levels, regime, agg_df = calculate_gamma_levels(options_df, spx_price)
+
+            # No mock options generation in production API
+            response = {
+                'success': False,
+                'error': 'No options data available'
+            }
+            self.send_response(503)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+            return
             
             # Convert to ES
             es_levels = {k: v + spread for k, v in levels.items()}
