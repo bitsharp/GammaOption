@@ -112,22 +112,24 @@ function calculateGammaLevels(options: any[], spxPrice: number) {
   // Find key levels
   const levels: any = {}
   
-  // Put Wall
-  const putStrikes = aggregated.filter(a => a.strike <= spxPrice)
+  // Put Wall - should be BELOW current price
+  const putStrikes = aggregated.filter(a => a.strike < spxPrice)
   if (putStrikes.length > 0) {
     const putWall = putStrikes.reduce((max, curr) => 
       Math.abs(curr.put_gamma) > Math.abs(max.put_gamma) ? curr : max
     )
     levels.put_wall = putWall.strike
+    console.log(`Put Wall found at ${putWall.strike} (below SPX ${spxPrice})`)
   }
   
-  // Call Wall
-  const callStrikes = aggregated.filter(a => a.strike >= spxPrice)
+  // Call Wall - should be ABOVE current price
+  const callStrikes = aggregated.filter(a => a.strike > spxPrice)
   if (callStrikes.length > 0) {
     const callWall = callStrikes.reduce((max, curr) => 
       Math.abs(curr.call_gamma) > Math.abs(max.call_gamma) ? curr : max
     )
     levels.call_wall = callWall.strike
+    console.log(`Call Wall found at ${callWall.strike} (above SPX ${spxPrice})`)
   }
   
   // Gamma Flip
@@ -139,6 +141,7 @@ function calculateGammaLevels(options: any[], spxPrice: number) {
       Math.abs(curr.net_gamma) < Math.abs(min.net_gamma) ? curr : min
     )
     levels.gamma_flip = gammaFlip.strike
+    console.log(`Gamma Flip found at ${gammaFlip.strike} (near SPX ${spxPrice})`)
   }
   
   // Determine regime
@@ -167,6 +170,13 @@ export async function GET() {
     Object.keys(levels).forEach(key => {
       esLevels[key] = levels[key] + spread
     })
+    
+    // Log for debugging
+    console.log('SPX Price:', finalSpxPrice)
+    console.log('ES Price:', finalEsPrice)
+    console.log('Spread:', spread)
+    console.log('SPX Levels:', levels)
+    console.log('ES Levels:', esLevels)
     
     // Limit gamma profile data for performance
     const gammaProfile = aggregated.slice(0, 50)
