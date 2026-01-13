@@ -104,10 +104,11 @@ class SPXtoESConverter:
         spread = self.get_spread()
         
         if spread is None:
-            logger.warning("Cannot convert to ES - spread not available")
+            logger.warning(f"Cannot convert SPX ${spx_level:.2f} to ES - spread not available")
             return None
         
         es_level = spx_level + spread
+        logger.debug(f"Converting: SPX ${spx_level:.2f} + spread {spread:.2f} = ES ${es_level:.2f}")
         
         return es_level
     
@@ -124,22 +125,27 @@ class SPXtoESConverter:
         
         spread = self.get_spread()
         if spread is None:
-            logger.warning("Cannot convert levels - spread not available")
+            logger.error("Cannot convert levels - spread not available. Returning empty dict.")
             return converted
+        
+        logger.info(f"Converting levels using spread: {spread:.2f}")
         
         for level_name, spx_value in spx_levels.items():
             if isinstance(spx_value, (int, float)):
                 es_value = self.convert_spx_level_to_es(spx_value)
                 
-                converted[level_name] = {
-                    'spx': spx_value,
-                    'es': es_value,
-                    'spread': spread
-                }
-                
-                logger.debug(f"{level_name}: SPX ${spx_value:.2f} → ES ${es_value:.2f}")
+                if es_value is not None:
+                    converted[level_name] = {
+                        'spx': spx_value,
+                        'es': es_value,
+                        'spread': spread
+                    }
+                    
+                    logger.info(f"{level_name}: SPX ${spx_value:.2f} → ES ${es_value:.2f} (spread: {spread:+.2f})")
+                else:
+                    logger.warning(f"Skipping {level_name} - conversion failed")
         
-        logger.info(f"Converted {len(converted)} levels from SPX to ES")
+        logger.info(f"Successfully converted {len(converted)} levels from SPX to ES")
         
         return converted
     

@@ -168,8 +168,8 @@ class DataFetcher:
                     continue
             
             if not options_data:
-                logger.warning("No options data retrieved from Polygon - using mock data")
-                return self._generate_mock_options_data()
+                logger.warning("No options data retrieved from Polygon - trying Yahoo Finance")
+                return self._fetch_yfinance_options(expiration_date)
             
             df = pd.DataFrame(options_data)
             logger.info(f"Fetched {len(df)} option contracts ({len(df[df['type']=='call'])} calls, {len(df[df['type']=='put'])} puts)")
@@ -178,8 +178,168 @@ class DataFetcher:
             
         except Exception as e:
             logger.error(f"Error fetching 0DTE options: {e}")
+            logger.warning("Falling back to Yahoo Finance")
+            return self._fetch_yfinance_options(expiration_date)
+    
+    def _fetch_yfinance_options(self, expiration_date: date) -> pd.DataFrame:
+        """Fetch real options data from Yahoo Finance (free).
+        
+        Args:
+            expiration_date: Expiration date for options
+            
+        Returns:
+            DataFrame with real options data from Yahoo Finance
+        """
+        try:
+            logger.info("Fetching real SPX options data from Yahoo Finance...")
+            
+            # Yahoo uses ^SPX for SPX index
+            ticker = yf.Ticker("^SPX")
+            
+            # Get available expiration dates
+            expirations = ticker.options
+            
+            if not expirations:
+                logger.warning("No expirations available from Yahoo Finance")
+                return self._generate_mock_options_data()
+            
+            # Find closest expiration to requested date
+            target_date_str = expiration_date.strftime("%Y-%m-%d")
+            expiration_str = None
+            
+            # For 0DTE, get today's expiration if available
+            for exp in expirations:
+                if exp == target_date_str:
+                    expiration_str = exp
+                    break
+            
+            # If exact date not found, use first available (closest)
+            if not expiration_str:
+                expiration_str = expirations[0]
+                logger.warning(f"0DTE not available, using nearest: {expiration_str}")
+            
+            # Get options chain
+            opt_chain = ticker.option_chain(expiration_str)
+            
+            options_data = []
+            
+            # Process calls
+            if not opt_chain.calls.empty:
+                calls = opt_chain.calls
+                for _, row in calls.iterrows():
+                    # Calculate gamma approximation from delta if not available
+                    gamma = self._estimate_gamma(
+                        row.get('strike', 0),
+                        self.get_spx_price() or 5850,
+                        row.get('impliedVolatility', 0.15),
+                        'call'
+                    )
+                    
+                    options_data.append({
+                        'ticker': f"SPX{int(row['strike'])}C",
+                        'strike': row['strike'],
+                        'type': 'call',
+                        'expiration': expiration_str,
+                        'volume': int(row.get('volume', 0)) if pd.notna(row.get('volume')) else 0,
+                        'open_interest': int(row.get('openInterest', 0)) if pd.notna(row.get('openInterest')) else 0,
+                        'implied_volatility': row.get('impliedVolatility', 0.15),
+                        'delta': self._estimate_delta(row['strike'], self.get_spx_price() or 5850, 'call'),
+                        'gamma': gamma,
+                        'theta': -0.5,  # Approximation
+                        'vega': 0.3,    # Approximation
+                    })
+            
+            # Process puts
+            if not opt_chain.puts.empty:
+                puts = opt_chain.puts
+                for _, row in puts.iterrows():
+                    gamma = self._estimate_gamma(
+                        row.get('strike', 0),
+                        self.get_spx_price() or 5850,
+                        row.get('impliedVolatility', 0.15),
+                        'put'
+                    )
+                    
+                    options_data.append({
+                        'ticker': f"SPX{int(row['strike'])}P",
+                        'strike': row['strike'],
+                        'type': 'put',
+                        'expiration': expiration_str,
+                        'volume': int(row.get('volume', 0)) if pd.notna(row.get('volume')) else 0,
+                        'open_interest': int(row.get('openInterest', 0)) if pd.notna(row.get('openInterest')) else 0,
+                        'implied_volatility': row.get('impliedVolatility', 0.16),
+                        'delta': self._estimate_delta(row['strike'], self.get_spx_price() or 5850, 'put'),
+                        'gamma': gamma,
+                        'theta': -0.5,  # Approximation
+                        'vega': 0.3,    # Approximation
+                    })
+            
+            if not options_data:
+                logger.warning("No options data from Yahoo Finance")
+                return self._generate_mock_options_data()
+            
+            df = pd.DataFrame(options_data)
+            logger.info(f"Fetched {len(df)} REAL option contracts from Yahoo Finance ({len(df[df['type']=='call'])} calls, {len(df[df['type']=='put'])} puts)")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Yahoo Finance options fetch failed: {e}")
             logger.warning("Falling back to mock data")
             return self._generate_mock_options_data()
+    
+    def _estimate_delta(self, strike: float, spot: float, option_type: str) -> float:
+        """Estimate delta based on moneyness.
+        
+        Args:
+            strike: Strike price
+            spot: Current spot price
+            option_type: 'call' or 'put'
+            
+        Returns:
+            Estimated delta
+        """
+        moneyness = strike / spot
+        
+        if option_type == 'call':
+            if moneyness < 0.95:  # Deep ITM
+                return 0.95
+            elif moneyness < 0.98:
+                return 0.75
+            elif moneyness < 1.02:  # ATM
+                return 0.50
+            elif moneyness < 1.05:
+                return 0.25
+            else:  # OTM
+                return 0.05
+        else:  # put
+            if moneyness > 1.05:  # Deep ITM
+                return -0.95
+            elif moneyness > 1.02:
+                return -0.75
+            elif moneyness > 0.98:  # ATM
+                return -0.50
+            elif moneyness > 0.95:
+                return -0.25
+            else:  # OTM
+                return -0.05
+    
+    def _estimate_gamma(self, strike: float, spot: float, iv: float, option_type: str) -> float:
+        """Estimate gamma - highest at ATM, decreases with distance.
+        
+        Args:
+            strike: Strike price
+            spot: Current spot price
+            iv: Implied volatility
+            option_type: 'call' or 'put'
+            
+        Returns:
+            Estimated gamma
+        """
+        distance = abs(strike - spot)
+        # Gamma peaks at ATM and decays exponentially
+        gamma = 0.002 * np.exp(-distance / 40) * (1 + iv)
+        return gamma
     
     def _generate_mock_options_data(self) -> pd.DataFrame:
         """Generate realistic mock options data for testing.
